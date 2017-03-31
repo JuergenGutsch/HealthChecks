@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.HealthChecks;
 using Microsoft.Extensions.Logging;
+using System.Threading.Tasks;
 
 namespace SampleHealthChecker
 {
@@ -35,6 +36,16 @@ namespace SampleHealthChecker
                 checks.AddVirtualMemorySizeCheck(2);
                 checks.AddWorkingSetCheck(1);
                 checks.AddUrlChecks(new List<string> { "https://github.com", "https://google.com", "https://twitddter.com" }, "servers");
+
+                checks.AddRetryCheck("possibly failing check", async () => 
+                {
+                    await Task.Delay(50);
+                    return HealthCheckResult.Unhealthy("some retries are failing");
+                });
+                checks.AddRetryCheck("possibly failing check", builder =>
+                {
+                    builder.AddUrlCheck("https://github.com");
+                });
 
                 /*
                 // add valid storage account credentials first
