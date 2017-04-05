@@ -3,8 +3,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
@@ -14,53 +12,33 @@ namespace Microsoft.Extensions.HealthChecks.Internal
     public class UrlChecker
     {
         private readonly Func<HttpResponseMessage, ValueTask<IHealthCheckResult>> _checkFunc;
-        private readonly string[] _urls;
+        private readonly string _url;
 
-        // REVIEW: Cache timeout here?
-        public UrlChecker(Func<HttpResponseMessage, ValueTask<IHealthCheckResult>> checkFunc, params string[] urls)
+        public UrlChecker(Func<HttpResponseMessage, ValueTask<IHealthCheckResult>> checkFunc, string url)
         {
             Guard.ArgumentNotNull(nameof(checkFunc), checkFunc);
-            Guard.ArgumentNotNullOrEmpty(nameof(urls), urls);
+            Guard.ArgumentNotNullOrWhitespace(nameof(url), url);
 
             _checkFunc = checkFunc;
-            _urls = urls;
+            _url = url;
         }
 
         public CheckStatus PartiallyHealthyStatus { get; set; } = CheckStatus.Warning;
 
-        public Task<IHealthCheckResult> CheckAsync()
-            => _urls.Length == 1 ? CheckSingleAsync() : CheckMultiAsync();
-
-        public async Task<IHealthCheckResult> CheckSingleAsync()
+        public async Task<IHealthCheckResult> CheckAsync()
         {
-            var httpClient = CreateHttpClient();
-            var result = default(IHealthCheckResult);
-            await CheckUrlAsync(httpClient, _urls[0], (_, checkResult) => result = checkResult).ConfigureAwait(false);
-            return result;
-        }
-
-        public async Task<IHealthCheckResult> CheckMultiAsync()
-        {
-            var composite = new CompositeHealthCheckResult(PartiallyHealthyStatus);
-            var httpClient = CreateHttpClient();
-
-            var tasks = _urls.Select(url => CheckUrlAsync(httpClient, url, (name, checkResult) => composite.Add(name, checkResult))).ToList();
-            await Task.WhenAll(tasks).ConfigureAwait(false);
-            return composite;
-        }
-
-        private async Task CheckUrlAsync(HttpClient httpClient, string url, Action<string, IHealthCheckResult> adder)
-        {
-            var name = $"UrlCheck({url})";
-            try
+            using (var httpClient = CreateHttpClient())
             {
-                var response = await httpClient.GetAsync(url).ConfigureAwait(false);
-                var result = await _checkFunc(response);
-                adder(name, result);
-            }
-            catch (Exception ex)
-            {
-                adder(name, HealthCheckResult.Unhealthy($"Exception during check: {ex.GetType().FullName}"));
+                try
+                {
+                    var response = await httpClient.GetAsync(_url).ConfigureAwait(false);
+                    return await _checkFunc(response);
+                }
+                catch (Exception ex)
+                {
+                    var data = new Dictionary<string, object> { { "url", _url } };
+                    return HealthCheckResult.Unhealthy($"Exception during check: {ex.GetType().FullName}", data);
+                }
             }
         }
 
@@ -73,8 +51,7 @@ namespace Microsoft.Extensions.HealthChecks.Internal
 
         public static async ValueTask<IHealthCheckResult> DefaultUrlCheck(HttpResponseMessage response)
         {
-            // REVIEW: Should this be an explicit 200 check, or just an "is success" check?
-            var status = response.StatusCode == HttpStatusCode.OK ? CheckStatus.Healthy : CheckStatus.Unhealthy;
+            var status = response.IsSuccessStatusCode ? CheckStatus.Healthy : CheckStatus.Unhealthy;
             var data = new Dictionary<string, object>
             {
                 { "url", response.RequestMessage.RequestUri.ToString() },
